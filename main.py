@@ -14,29 +14,11 @@ from typing import Dict, Optional, Tuple, List
 from dateutil import parser as dtparser
 from tqdm import tqdm
 
-
-IMAGE_EXTS = {
-    ".jpg",
-    ".jpeg",
-    ".png",
-    ".tif",
-    ".tiff",
-    ".heic",
-    ".webp",
-    ".gif",
-    ".bmp",
-}
-
-VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".avi", ".m4v", ".3gp", ".webm"}
+from helpers import IMAGE_EXTS, VIDEO_EXTS, run_cmd, to_utc, parse_exif_dt
 
 TIME_KEYS = ["photoTakenTime", "creationTime", "mediaMetadata"]
 GEO_KEYS = ["geoData", "geoDataExif"]
 
-
-def run_cmd(cmd: List[str]) -> Tuple[int, str, str]:
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    out, err = p.communicate()
-    return p.returncode, out.strip(), err.strip()
 
 
 def check_dependencies():
@@ -55,13 +37,7 @@ def check_dependencies():
             sys.exit(1)
 
 
-def to_utc(dt: Optional[datetime]) -> Optional[datetime]:
-    # Treat naive as UTC (Takeout timestamps are UTC)
-    if dt is None:
-        return None
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+
 
 
 def parse_json(json_path: Path) -> Optional[Dict]:
@@ -169,83 +145,16 @@ def extract_title_desc(data: Dict) -> Tuple[Optional[str], Optional[str]]:
 
 # ------------------------ name matching ------------------------
 from find_media import find_media
+from image import read_img_meta, write_image, get_existing_times_img
+from video import read_vid_meta, write_video, get_existing_times_vid
 
 # ------------------------ read metadata ------------------------
 
 
-def read_img_meta(path: Path) -> Dict:
-    code, out, _ = run_cmd(["exiftool", "-j", "-a", "-u", "-G1", str(path)])
-    if code != 0:
-        return {}
-    try:
-        arr = json.loads(out)
-        return arr[0] if arr else {}
-    except Exception:
-        return {}
 
 
-def read_vid_meta(path: Path) -> Dict:
-    code, out, _ = run_cmd(
-        ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", str(path)]
-    )
-    if code != 0:
-        return {}
-    try:
-        return json.loads(out).get("format", {})
-    except Exception:
-        return {}
 
 
-def parse_exif_dt(val: Optional[str]) -> Optional[datetime]:
-    if not val:
-        return None
-
-    v = str(val).strip()
-
-    try:
-        return datetime.strptime(v[:19], "%Y:%m:%d %H:%M:%S")
-    except Exception:
-        pass
-
-    try:
-        return dtparser.parse(v)
-    except Exception:
-        return None
-
-
-def get_existing_times_img(
-    meta,
-) -> Tuple[Optional[datetime], Optional[datetime], Optional[datetime]]:
-    dto = parse_exif_dt(meta.get("DateTimeOriginal"))
-    cr = parse_exif_dt(meta.get("CreateDate"))
-    md = parse_exif_dt(meta.get("ModifyDate"))
-    return dto, cr, md
-
-
-def get_existing_times_vid(
-    meta,
-) -> Tuple[Optional[datetime], Optional[datetime], Optional[datetime]]:
-    tags = meta.get("tags") if isinstance(meta.get("tags"), dict) else {}
-    possible = [
-        "creation_time",
-        "Creation_time",
-        "creation-time",
-        "creation_date",
-        "creation-date",
-        "com.apple.quicktime.creationdate",
-        "creationTime",
-    ]
-    raw = None
-    for k in possible:
-        if k in tags and tags.get(k):
-            raw = tags.get(k)
-            break
-
-    if raw is None:
-        raw = meta.get("creation_time")
-
-    cr = parse_exif_dt(raw)
-    return None, cr, cr
 
 
 def needs_update(path: Path, taken_dt, creation_dt, gps, title, desc) -> bool:
@@ -336,105 +245,109 @@ def needs_update(path: Path, taken_dt, creation_dt, gps, title, desc) -> bool:
     return False
 
 
-def write_image(path: Path, taken_dt, gps, write: bool):
-    taken_utc = to_utc(taken_dt)
-    if not taken_utc:
-        return False, "Invalid taken_dt"
-
-    date_str = taken_utc.strftime("%Y:%m:%d %H:%M:%S")
-    ext = path.suffix.lower()
-
-    args = ["exiftool", "-overwrite_original"]
-
-    supports_exif = ext in [".jpg", ".jpeg", ".tif", ".tiff", ".webp"]
-
-    if supports_exif:
-        args.append("-EXIF:all=")
-        args += [
-            f"-EXIF:DateTimeOriginal={date_str}",
-            f"-EXIF:CreateDate={date_str}",
-            f"-EXIF:ModifyDate={date_str}",
-            f"-IFD0:ModifyDate={date_str}",
-        ]
-
-    args += [
-        f"-XMP:CreateDate={date_str}",
-        f"-XMP:DateTimeOriginal={date_str}",
-        f"-XMP:ModifyDate={date_str}",
-    ]
-
-    if supports_exif and gps:
-        lat, lon, alt = gps
-
-        if lat is not None:
-            args.append(f"-EXIF:GPSLatitudeRef={'N' if lat >= 0 else 'S'}")
-            args.append(f"-EXIF:GPSLatitude={abs(lat)}")
-
-        if lon is not None:
-            args.append(f"-EXIF:GPSLongitudeRef={'E' if lon >= 0 else 'W'}")
-            args.append(f"-EXIF:GPSLongitude={abs(lon)}")
-
-        if alt is not None:
-            args.append(f"-EXIF:GPSAltitude={alt}")
-            args.append("-EXIF:GPSAltitudeRef=0")
-
-    args.append(str(path))
-
-    if not write:
-        return True, "Dry-run OK"
-
-    code, out, err = run_cmd(args)
-    return (code == 0, out if out else err)
-
-
-def write_video(path: Path, taken_dt, creation_dt, title, desc, write: bool):
-    created_utc = to_utc(creation_dt)
-    if not created_utc and not title and not desc:
-        return False, "Nothing to write"
-
-    tmp = path.with_suffix(path.suffix + ".tmp")
-
-    cmd = ["ffmpeg", "-y", "-i", str(path), "-c", "copy"]
-
-    if created_utc:
-        iso = created_utc.isoformat().replace("+00:00", "Z")
-        cmd += ["-metadata", f"creation_time={iso}"]
-
-    if title:
-        cmd += ["-metadata", f"title={title}"]
-    if desc:
-        cmd += ["-metadata", f"comment={desc}"]
-
-    cmd.append(str(tmp))
-
-    if not write:
-        return True, "Dry-run ok"
-
-    code, out, err = run_cmd(cmd)
-    if code != 0:
-        if tmp.exists():
-            tmp.unlink()
-        return False, err or out
-
-    bak = path.with_suffix(path.suffix + ".bak")
-    try:
-        shutil.move(path, bak)
-        shutil.move(tmp, path)
-        bak.unlink(missing_ok=True)
-        return True, "updated"
-    except Exception as e:
-        return False, str(e)
-
-
 def main():
     parser = argparse.ArgumentParser(description="Restore Google Takeout metadata.")
     parser.add_argument("--root", required=True)
     parser.add_argument("--write", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--report", default="takeout_restore_report.txt")
+    parser.add_argument("--check", action="store_true", help="Check mode: list files whose original EXIF date is within the given range")
+    parser.add_argument("--from", dest="from_date", help="Start date (inclusive) in yyyy-mm-dd format")
+    parser.add_argument("--to", dest="to_date", help="End date (inclusive) in yyyy-mm-dd format")
     args = parser.parse_args()
 
     write = args.write and not args.dry_run
+
+    # CHECK mode: scan media files (not JSON), list matching files one per line
+    if args.check:
+        def parse_day(s: str):
+            try:
+                return datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=UTC)
+            except Exception:
+                return None
+
+        from_dt = parse_day(args.from_date) if args.from_date else None
+        to_dt = parse_day(args.to_date) if args.to_date else None
+
+        # both omitted -> to = now
+        if from_dt is None and to_dt is None:
+            to_dt = datetime.now(tz=timezone.utc).replace(tzinfo=UTC)
+
+        # only from -> to = now
+        if from_dt is not None and to_dt is None:
+            to_dt = datetime.now(tz=timezone.utc).replace(tzinfo=UTC)
+
+        # only to -> from = epoch
+        if from_dt is None and to_dt is not None:
+            from_dt = datetime.fromtimestamp(0, tz=UTC)
+
+        # inclusive end of day
+        to_dt = to_dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+        root = Path(args.root).expanduser().resolve()
+        if not root.exists():
+            print(f"[FATAL] Root does not exist: {root}", file=sys.stderr)
+            sys.exit(1)
+
+        check_dependencies()
+
+        # collect all media files under root
+        media_files = [p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in (IMAGE_EXTS | VIDEO_EXTS)]
+
+        matched = []
+        orphaned = []
+
+        from tqdm import tqdm as _tqdm
+        for media_path in _tqdm(media_files, desc="Scanning media", unit="file"):
+            ext = media_path.suffix.lower()
+
+            file_dt_raw = None
+            if ext in IMAGE_EXTS:
+                meta = read_img_meta(media_path)
+                for tag in ("ExifIFD:DateTimeOriginal", "ExifIFD:CreateDate", "XMP-xmp:CreateDate"):
+                    if tag in meta and meta.get(tag):
+                        file_dt_raw = meta.get(tag)
+                        break
+            else:
+                # for videos, try common creation tags
+                meta = read_vid_meta(media_path)
+                tags = meta.get("tags", {}) if isinstance(meta.get("tags"), dict) else {}
+                for k in ("creation_time", "Creation_time", "creation-date", "creation_date", "creationTime"):
+                    if k in tags and tags.get(k):
+                        file_dt_raw = tags.get(k)
+                        break
+                if not file_dt_raw:
+                    file_dt_raw = meta.get("creation_time")
+
+            if not file_dt_raw:
+                continue
+
+            dt = parse_exif_dt(file_dt_raw)
+            if dt is None:
+                continue
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
+
+            if from_dt <= dt <= to_dt:
+                print(str(media_path))
+                matched.append(media_path)
+
+                # check for sidecar existence (media.jpg.json)
+                # sidecar = media_path.with_name(media_path.name + ".json")
+                # if not sidecar.exists():
+                #     orphaned.append(media_path)
+
+        # summary
+        print("")
+        print(f"Scanned: {len(media_files)} media files")
+        print(f"Matched: {len(matched)} files in date range")
+        if matched:
+            print("")
+            print("Matched files:")
+            for p in matched:
+                print(str(p))
+
+        return
 
     check_dependencies()
 

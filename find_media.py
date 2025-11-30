@@ -1,6 +1,8 @@
-
-
 import re
+import os
+from pathlib import Path
+from typing import Optional, List, Tuple
+from helpers import IMAGE_EXTS, VIDEO_EXTS
 
 
 def _strip_index(stem: str) -> tuple[str, int, bool]:

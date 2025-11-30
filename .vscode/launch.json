@@ -16,6 +16,14 @@
             "program": "${workspaceFolder}/main.py",
             "args": ["--root", "tests", "--write"],
             "console": "integratedTerminal"
+        },
+        {
+            "name": "Python Debugger: CHECK",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/main.py",
+            "args": ["--root", "tests", "--check"],
+            "console": "integratedTerminal"
         }
     ]
 }
