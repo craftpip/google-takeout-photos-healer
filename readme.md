@@ -1,33 +1,57 @@
-## Google Photos Takeout Metadata Restorer
+# Google Photos Takeout Healer
 
-yes, another google photos takeout fixer is here. I've been exporting from google photos regularly, thus understanding its little quirks on naming their files, which i've aimed to solve here. 
+#### Heal your Photos/Videos, make them as they should be with their identity of their birth.
 
-- Recursively scans a Takeout folder
-- Finds sidecar JSON files and matches them to media
-- Restores EXIF/GPS/time for images using ExifTool
-- Restores creation_time for videos using FFmpeg
-- Handles filename mismatches using "title" field from JSON
+###### Features:
+
+- Scans and applies original creation date (or test run to see what's up)
+- Works on Images and Videos
+- Handles file name differences quirks
+- Finds media for json, they shall be no orphan json files (it will ask you to choose from similarly named media files or you can skip)
+- Moves the healed media to a new folder. (leaving orphan media files behind that you can analyse)
+- Converts images to jpg, because it ensures 'photoTakenTime's existence.
 - Shows progress, prints failures, and writes a summary report
+- Easy
 
-## Usage:
-  python3 takeout_restore.py --root "/path/to/Takeout/Google Photos" --write
-  python3 takeout_restore.py --root "/path/to/folder" --write --fix-names
-  python3 takeout_restore.py --root "/path/to/folder" --dry-run
+##### Requirements
 
-## Notes:
+- Python3.10
 - exiftool is required (best-in-class for EXIF writing)
 - ffmpeg is required for video timestamp restore
 
-### Ubuntu:  
+###### Install:
+
+```terminaloutput
+# debian
 sudo apt update   
 sudo apt install exiftool -y  
 sudo apt install ffmpeg -y
 
-### Mac: 
+# mac
 brew install exiftool  
 brew install ffmpeg
 
-### Windows: 
-choco install exiftool  
+# windows
+choco install exiftool
 choco install ffmpeg
+```
 
+#### Run code:
+
+```
+git clone
+cd ..
+python3.10 -m venv venv
+. venv/bin/activate
+pip install -r requirements.txt 
+python main.py --root "/path/to/takeout/" --write --jpg --move "/path/to/relaxation" 
+```
+
+#### Options
+
+1. **--root** - path to your google takeout folder.
+2. **--write** - write changes to your files (else it will run a dry test)
+3. **--jpg** - convert your non-jpg images to jpg
+4. **--move** - after tagging your files the json+media will be moved to this folder, preserving your directory structure
+5. **--motionphoto** - find and list videos that are 2-3 second motion videos, created for motion photos
+6. **--delete** - for motionphoto, delete the found videos.

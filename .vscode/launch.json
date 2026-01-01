@@ -6,7 +6,7 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/main.py",
-            "args": ["--root", "tests"],
+            "args": ["--root", "tests/all/2014"],
             "console": "integratedTerminal"
         },
         {
@@ -23,6 +23,14 @@
             "request": "launch",
             "program": "${workspaceFolder}/main.py",
             "args": ["--root", "tests", "--check"],
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Python Debugger: Check dupes",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/duplicate.py",
+            "args": ["--root", "tests", "--finddupes"],
             "console": "integratedTerminal"
         }
     ]
