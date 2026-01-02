@@ -15,10 +15,14 @@ def read_vid_meta(path: Path) -> dict:
     except Exception:
         return {}
 
+
 from typing import Optional, Tuple
+
 
 def get_existing_times_vid(meta) -> Tuple[Optional[object], Optional[object], Optional[object]]:
     # Normalize incoming meta
+    if isinstance(meta, dict) and "format" in meta and isinstance(meta["format"], dict):
+        meta = meta["format"]
     tags = meta.get("tags") if isinstance(meta.get("tags"), dict) else {}
     format_tags = {}
     if isinstance(meta.get("format"), dict) and isinstance(meta["format"].get("tags"), dict):
@@ -77,20 +81,53 @@ def get_existing_times_vid(meta) -> Tuple[Optional[object], Optional[object], Op
     cr = parse_exif_dt(raw) if raw else None
     return None, cr, cr
 
+
+
 def write_video(path: Path, creation_dt, write: bool):
     created_utc = to_utc(creation_dt)
     if not created_utc:
         return False, "Nothing to write"
 
     created_utc = created_utc.replace(microsecond=0)
+    exif_dt = created_utc.strftime("%Y:%m:%d %H:%M:%S")
     iso = created_utc.isoformat().replace("+00:00", "Z")
 
+    ext = path.suffix.lower()
+
+    if ext in {".mp4", ".mov", ".m4v"}:
+        return write_video_with_exiftool(path, exif_dt, write)
+    else:
+        return write_video_with_ffmpeg(path, iso, write)
+
+
+def write_video_with_exiftool(path: Path, exif_dt: str, write: bool):
+    cmd = [
+        "exiftool",
+        "-overwrite_original",
+        f"-CreateDate={exif_dt}",
+        f"-MediaCreateDate={exif_dt}",
+        f"-TrackCreateDate={exif_dt}",
+        str(path),
+    ]
+
+    if not write:
+        return True, "Dry-run ok"
+
+    code, out, err = run_cmd(cmd)
+    if code != 0:
+        return False, (err or out or "exiftool failed").strip()
+
+    return True, "updated"
+
+
+def write_video_with_ffmpeg(path: Path, iso: str, write: bool):
     tmp = path.with_suffix(path.suffix + ".tmp")
     bak = path.with_suffix(path.suffix + ".bak")
 
     ext = path.suffix.lower()
     is_qt = ext in {".mp4", ".m4v", ".mov", ".qt"}
     is_mkv = ext in {".mkv", ".webm"}
+    is_avi = ext == ".avi"
 
     cmd = [
         "ffmpeg",
@@ -111,34 +148,20 @@ def write_video(path: Path, creation_dt, write: bool):
     if is_qt:
         cmd += ["-movflags", "use_metadata_tags"]
 
-    # Write all the common "created" keys so different parsers (ffprobe/exiftool/apps)
-    # pick it up as CreateDate/MediaCreateDate/CreationTime/etc.
     meta_pairs = [
         ("creation_time", iso),
-        ("date", iso),
-        ("created_date", iso),
         ("CreateDate", iso),
         ("MediaCreateDate", iso),
     ]
 
-    # QuickTime/MP4 commonly read by Apple Photos/iOS etc.
     if is_qt:
-        meta_pairs += [
-            ("com.apple.quicktime.creationdate", iso),
-        ]
+        meta_pairs.append(("com.apple.quicktime.creationdate", iso))
 
-    # Matroska/WebM commonly read by players/editors
     if is_mkv:
-        meta_pairs += [
-            ("DATE_RECORDED", iso),
-            ("DATE", iso),
-        ]
+        meta_pairs += [("DATE_RECORDED", iso), ("DATE", iso)]
 
-    # AVI INFO chunk date (some tools map this)
-    if ext == ".avi":
-        meta_pairs += [
-            ("ICRD", iso),
-        ]
+    if is_avi:
+        meta_pairs.append(("ICRD", iso))
 
     for k, v in meta_pairs:
         cmd += ["-metadata", f"{k}={v}"]
@@ -149,46 +172,24 @@ def write_video(path: Path, creation_dt, write: bool):
         return True, "Dry-run ok"
 
     if tmp.exists():
-        try:
-            tmp.unlink()
-        except Exception:
-            pass
+        tmp.unlink(missing_ok=True)
 
     code, out, err = run_cmd(cmd)
     if code != 0:
-        if tmp.exists():
-            try:
-                tmp.unlink()
-            except Exception:
-                pass
+        tmp.unlink(missing_ok=True)
         return False, (err or out or "ffmpeg failed").strip()
 
     if not tmp.exists():
         return False, "ffmpeg did not produce output file"
 
     try:
-        if bak.exists():
-            bak.unlink()
+        bak.unlink(missing_ok=True)
         shutil.move(path, bak)
-        try:
-            shutil.move(tmp, path)
-        except Exception:
-            # rollback
-            try:
-                if path.exists():
-                    path.unlink()
-            except Exception:
-                pass
-            if bak.exists():
-                shutil.move(bak, path)
-            raise
-
+        shutil.move(tmp, path)
         bak.unlink(missing_ok=True)
         return True, "updated"
     except Exception as e:
-        if tmp.exists():
-            try:
-                tmp.unlink()
-            except Exception:
-                pass
+        tmp.unlink(missing_ok=True)
+        if bak.exists():
+            shutil.move(bak, path)
         return False, str(e)

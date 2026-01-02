@@ -1,8 +1,8 @@
 # Google Photos Takeout Healer
 
-#### Heal your Photos/Videos, make them as they should be with their identity of their birth.
+#### Heal your photos and videos from their identity crisis. Yes, they do remember when they were born.
 
-###### Features:
+#### Features:
 
 - Scans and applies original creation date (or test run to see what's up)
 - Works on Images and Videos
@@ -11,9 +11,9 @@
 - Moves the healed media to a new folder. (leaving orphan media files behind that you can analyse)
 - Converts images to jpg, because it ensures 'photoTakenTime's existence.
 - Shows progress, prints failures, and writes a summary report
-- Easy
+- Easy, Nextcloud is happy
 
-##### Requirements
+### Requirements
 
 - Python3.10
 - exiftool is required (best-in-class for EXIF writing)
@@ -21,7 +21,7 @@
 
 ###### Install:
 
-```terminaloutput
+```
 # debian
 sudo apt update   
 sudo apt install exiftool -y  
@@ -36,11 +36,11 @@ choco install exiftool
 choco install ffmpeg
 ```
 
-#### Run code:
+### Run code:
 
 ```
-git clone
-cd ..
+git clone <this repo>
+cd <this repo>
 python3.10 -m venv venv
 . venv/bin/activate
 pip install -r requirements.txt 

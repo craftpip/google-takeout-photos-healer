@@ -2,7 +2,7 @@ import re
 import os
 import sys
 from pathlib import Path
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Any
 from utils.helpers import IMAGE_EXTS, VIDEO_EXTS
 import math
 import utils.app_config
@@ -118,7 +118,7 @@ def find_media(json_path: Path) -> Optional[List[Path]]:
     return [scored[0][1]]
 
 
-def find_matching_media(json_path: Path, media_path: Path) -> Optional[Path]:
+def find_matching_media(json_path: Path, media_path: Path) -> tuple[Path, None] | tuple[None, None] | tuple[Any, None] | tuple[None, tuple[Path, Path, list[Any]]] | Path:
     # json is the sidecar, and media is the file defined inside the json file, (which can be wrong) lol
     # rules for matching
     #   first file the file that is matched perfectly. that is the media_path
@@ -134,10 +134,10 @@ def find_matching_media(json_path: Path, media_path: Path) -> Optional[Path]:
         variant_media_file = Path(str(json_path.parent) + "/" + media_path.stem + "(" + str(variant_number) + ")" + media_path.suffix)
 
         if variant_media_file.exists():
-            return variant_media_file
+            return (variant_media_file, None)
         else:
             # try with the file name given in media path
-            return None
+            return (None, None)
     else:
         if not media_path.exists():
             # if the media file is not found, (which was given in the json file)
@@ -148,35 +148,35 @@ def find_matching_media(json_path: Path, media_path: Path) -> Optional[Path]:
 
             alt = Path(str(media_path.parent) + '/' + media_path.stem + '.jpg')
             if alt.exists():
-                return alt
+                return (alt, None)
 
             # remove_motion_gif
             if media_path.stem.find("-MOTION") != -1:
                 alt = Path(str(media_path.parent) + '/' + media_path.stem[:-len('-MOTION')] + media_path.suffix)
                 if alt.exists():
-                    return alt
+                    return (alt, None)
 
             # replace_smile_with_(1)
             if media_path.stem.find("-SMILE") != -1:
                 alt = Path(str(media_path.parent) + '/' + media_path.stem[:-len('-SMILE')] + "(1)" + media_path.suffix)
                 if alt.exists():
-                    return alt
+                    return (alt, None)
 
             # dash_before_ext_add_(1)
             alt = Path(str(media_path.parent) + '/' + str(media_path.stem) + "(1)" + str(media_path.suffix))
             if alt.exists():
-                return alt
+                return (alt, None)
 
             # fb_n_suffix
             if media_path.stem.endswith('-n'):
                 alt = Path(str(media_path.parent) + '/' + media_path.stem[:-2] + '_(1)' + media_path.suffix)
                 if alt.exists():
-                    return alt
+                    return (alt, None)
 
             if media_path.stem.endswith('_n'):
                 alt = Path(str(media_path.parent) + '/' + media_path.stem[:-2] + '_(1)' + media_path.suffix)
                 if alt.exists():
-                    return alt
+                    return (alt, None)
 
             # fallback, check all, missing_end_before_(1), missing_end_prefix_match
             # make this into expanding search
@@ -185,9 +185,9 @@ def find_matching_media(json_path: Path, media_path: Path) -> Optional[Path]:
             half_name_matches = []
             nearest_matches = []
             for p in media_path.parent.iterdir():
-                if p.stem.startswith(half_name) and p.is_file and p.suffix.lower() != '.json':
+                if p.stem.startswith(half_name) and p.is_file() and p.suffix.lower() != '.json':
                     half_name_matches.append(p)
-                if p.stem.startswith(nearest) and p.is_file and p.suffix.lower() != '.json':
+                if p.stem.startswith(nearest) and p.is_file() and p.suffix.lower() != '.json':
                     nearest_matches.append(p)
 
             if len(nearest_matches):
@@ -196,34 +196,16 @@ def find_matching_media(json_path: Path, media_path: Path) -> Optional[Path]:
                 matches = half_name_matches
 
             if len(matches) == 1:
-                return matches[0]
+                return (matches[0], None)
 
             if len(matches) > 1:
                 root = utils.app_config.ARGS.root
 
-                print(
-                    "\n\nNo matches found, choose the closes match from below (based on filename) or skip\n"
-                    f"JSON:     {json_path.name}\n"
-                    f"NEEDED:   {media_path.name}\n=== found " + str(len(matches)) + " lazy matches ==="
-                )
-                for i, m in enumerate(matches, 1):
-                    # json_path.stem + json.suffix , trying to find media_path.steam + media_path.suffix, did not find any matching thus pls select one of below that lazy match the file name. or skip
-                    print(f"[{i}]       {m.name}, size {math.floor(m.stat().st_size / 1000)} kb")
-                    if i > 5:
-                        print(f"...")
-                        break
+                # store this for later, and ask the user in the end
+                # later = (json_path, media_path, matches)
+                return (None, matches)
 
-                while True:
-                    sys.stdout.write("\a")
-                    sys.stdout.flush()
-                    choice = input(f"\nSelect 1-{len(matches)} (or just ENTER to skip): ").strip()
-                    if choice in {"0", ""}:
-                        return None
-                    if choice.isdigit():
-                        idx = int(choice)
-                        if 1 <= idx <= len(matches):
-                            return matches[idx - 1]
             # more than three matches? its some library or something
-            return None
+            return (None, None)
 
-        return media_path
+        return (media_path, None)
