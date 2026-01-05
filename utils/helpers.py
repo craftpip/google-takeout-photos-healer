@@ -208,13 +208,19 @@ def move_preserve_structure(
             _fatal(f"Failed cleaning temp file: {tmp}", e)
 
 
-def get_time_from_filename(filename: str):
+def get_time_from_filename(filename: str) -> Optional[int]:
     """
     Extract datetime from filename (without extension) and return Unix timestamp (UTC).
     Returns None if no timestamp found.
     """
 
     patterns = [
+        # WP_YYYYMMDD_HH_MM_SS (e.g., WP_20131230_22_01_21_Pro-edited)
+        r'(?P<y>\d{4})(?P<m>\d{2})(?P<d>\d{2})[_\- ](?P<H>\d{2})[_\- ](?P<M>\d{2})[_\- ](?P<S>\d{2})',
+
+        # WP_YYYYMMDD_HHMM (or HMM) (e.g., WP_20131231_003-edited -> 00:03:00 UTC)
+        r'(?P<y>\d{4})(?P<m>\d{2})(?P<d>\d{2})[_\- ](?P<hm>\d{3,4})\b',
+
         # YYYYMMDD_HHMMSS or YYYYMMDDHHMMSS
         r'(?P<y>\d{4})(?P<m>\d{2})(?P<d>\d{2})[_\- ]?(?P<H>\d{2})(?P<M>\d{2})(?P<S>\d{2})',
 
@@ -244,15 +250,27 @@ def get_time_from_filename(filename: str):
         if gd.get("unixms"):
             return int(gd["unixms"]) // 1000
 
-        dt = datetime(
-            int(gd["y"]),
-            int(gd["m"]),
-            int(gd["d"]),
-            int(gd["H"]),
-            int(gd["M"]),
-            int(gd["S"]),
-            tzinfo=timezone.utc
-        )
-        return int(dt.timestamp())
+        # Handle WP_YYYYMMDD_HHMM / HMM
+        if gd.get("hm"):
+            hm = gd["hm"].zfill(4)  # 003 -> 0003
+            H = int(hm[:2])
+            M = int(hm[2:])
+            S = 0
+        else:
+            H = int(gd["H"])
+            M = int(gd["M"])
+            S = int(gd["S"])
+
+        try:
+            dt = datetime(
+                int(gd["y"]),
+                int(gd["m"]),
+                int(gd["d"]),
+                H, M, S,
+                tzinfo=timezone.utc
+            )
+            return int(dt.timestamp())
+        except Exception:
+            return None
 
     return None
