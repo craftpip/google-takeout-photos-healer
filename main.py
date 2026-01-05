@@ -4,7 +4,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from tqdm import tqdm
-from utils.helpers import IMAGE_EXTS, VIDEO_EXTS, check_dependencies, parse_json, move_preserve_structure
+from utils.helpers import IMAGE_EXTS, VIDEO_EXTS, check_dependencies, parse_json, move_preserve_structure, get_time_from_filename
 import utils.app_config
 
 TIME_KEYS = ["photoTakenTime", "creationTime", "mediaMetadata"]
@@ -16,7 +16,7 @@ from utils.image import read_img_meta, write_image, to_jpeg
 from utils.video import read_vid_meta, write_video, get_existing_times_vid
 
 
-def make_changes(json_path, media_path, media, title, photoTakenTime_dt, gps):
+def make_changes(media, photoTakenTime_dt, gps):
     ext = media.suffix.lower()
     is_img = ext in IMAGE_EXTS
     is_vid = ext in VIDEO_EXTS
@@ -76,9 +76,10 @@ def main():
     parser.add_argument("--root", required=True)
     parser.add_argument("--write", action="store_true")
     parser.add_argument("--report", default="takeout_restore_report.txt")
+    parser.add_argument("--overwrite-smart", help="Overwrite all files from file's format or fallback to date-time")
+    parser.add_argument("--overwrite-date", help="Overwrite all files to fixed date-time")
     parser.add_argument("--move", help="Move the files to sub-directory after update")
     parser.add_argument("--jpg", action="store_true", help="Convert non jpeg images to jpeg")
-
     parser.add_argument("--motionphoto", action="store_true", help="Find short mp4 motion-photo videos that have a matching photo")
     parser.add_argument("--delete", action="store_true", help="When used with --motionphoto, delete the found videos")
     args = parser.parse_args()
@@ -88,12 +89,6 @@ def main():
     if not root.exists():
         print(f"[FATAL] Root does not exist: {root}")
         sys.exit(1)
-
-    mode = 'DRY-RUN'
-    if args.write:
-        mode = 'WRITE'
-    elif args.motionphoto:
-        mode = 'CHECK-MOTIONPHOTO'
 
     # MOTIONPHOTO mode: find mp4 files shorter than 5s that have a photo with same base name
     if args.motionphoto:
@@ -149,109 +144,183 @@ def main():
 
         return
 
-    # scan all json files
-    json_files = [p for p in root.rglob("*.json") if p.is_file()]
-    if not json_files:
-        print("[WARN] No JSON sidecars found. vroom vroom.")
-        sys.exit(0)
-
     success = []
     already_ok = []
     failures = []
     skipped = []
     ask_later = []
 
+    mode = 'DRY-RUN'
+    if args.overwrite_date:
+        mode = 'OVERWRITE-DATE'
+    if args.overwrite_smart:
+        mode = 'OVERWRITE-SMART'
+    elif args.write:
+        mode = 'WRITE'
+    elif args.motionphoto:
+        mode = 'CHECK-MOTIONPHOTO'
+
     print("Mode:", mode)
 
-    total = len(json_files)
+    if args.overwrite_smart or args.overwrite_date:
+        ALL_EXTS = VIDEO_EXTS | IMAGE_EXTS
+        media_files = [
+            p for p in root.rglob("*")
+            if p.is_file() and p.suffix.lower() in ALL_EXTS
+        ]
+        if not media_files:
+            print('[WARN] No media files found')
+            sys.exit(0)
 
-    for i, json_path in enumerate(json_files):
-        # for json_path in tqdm(json_files, desc="Processing sidecars", unit="file"):
-        print("[" + str(i) + "/" + str(total) + "] processing " + str(json_path) + '')
-        data = parse_json(json_path)
-        if data is None:
-            failures.append((json_path, None, "JSON unreadable"))
-            continue
-        if "__parse_error__" in data:
-            failures.append((json_path, None, data["__parse_error__"]))
-            continue
+        total = len(media_files)
+        date_to_write = ts = int(
+            datetime.strptime(args.overwrite_smart or args.overwrite_date, "%Y-%m-%d")
+            .replace(tzinfo=timezone.utc)
+            .timestamp()
+        )
 
-        if "title" not in data:
-            skipped.append((json_path, None, "No title field"))
-            continue
+        print(ts)
+        for i, media in enumerate(media_files):
+            print("[" + str(i) + "/" + str(total) + "] processing " + str(media) + '')
 
-        # strictly require photoTakenTime
-        if "photoTakenTime" in data and "timestamp" in data["photoTakenTime"]:
-            photoTakenTime = int(data["photoTakenTime"]["timestamp"])
-        else:
-            failures.append((json_path, None, "photoTakenTime in json missing"))
-            continue
+            if args.overwrite_smart:
+                media_name = media.stem
 
-        if "creationTime" in data and "timestamp" in data["creationTime"]:
-            creationTime = int(data["creationTime"]["timestamp"])
-        else:
-            creationTime = photoTakenTime
+                time = get_time_from_filename(media_name)
+                if time is not None:
+                    dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+                    # show time only if it's not midnight
+                    if dt.time().hour or dt.time().minute or dt.time().second:
+                        date_to_write = dt.strftime("%Y-%m-%d %H:%M:%S")
+                    else:
+                        date_to_write = dt.strftime("%Y-%m-%d")
 
-        photoTakenTime_dt = datetime.fromtimestamp(photoTakenTime, timezone.utc)
-        # photoCreationTime_dt = datetime.fromtimestamp(creationTime, timezone.utc)
+                    print(f'Found date: {date_to_write} for file {media.stem}{media.suffix}')
 
-        gps = None
-        if "geoData" in data:
-            geo = data["geoData"]
-            try:
-                lat = float(geo.get("latitude"))
-                lon = float(geo.get("longitude"))
-                alt = float(geo.get("altitude"))
-                gps = (lat, lon, alt)
-            except Exception:
-                pass
+            photoTakenTime_dt = datetime.fromtimestamp(date_to_write, timezone.utc)
+            if utils.app_config.ARGS.jpg and media.suffix.lower() not in ['.jpeg', '.jpg'] and utils.app_config.ARGS.write \
+                    and media.suffix.lower() in IMAGE_EXTS:
+                try:
+                    media2 = to_jpeg(media)
+                    media.unlink()
+                    media = media2
+                except Exception as e:
+                    failures.append((media, None, e.__str__()))
+                    continue
 
-        # the file to update,
-        # now this file must exist, or else its there with some other name changes.
-        title = data.get("title")
-        media_path = Path(str(json_path.parent) + '/' + title)
-        # here
+            ok, msg = make_changes(media, photoTakenTime_dt, None)
+            if ok == 'ok':
+                success.append((media, media))
+            if ok == 'already_ok':
+                already_ok.append((media, media, ""))
+            if ok == 'skipped':
+                skipped.append((media, media, msg))
+            if ok == 'failures':
+                failures.append((media, media, msg))
 
-        media, matches = find_matching_media(json_path, media_path)
-        if not media and matches is not None:
-            print("\n  media for '" + json_path.stem + json_path.suffix + "' not found, will ask for confirmation later. \n")
-            ask_later.append((json_path, media_path, matches, title, photoTakenTime_dt, gps))
-            continue
-        elif not media:
-            print("\n  media for '" + json_path.stem + json_path.suffix + "' not found. \n")
-            failures.append((json_path, None, "Media not found / Skip"))
-            continue
+            if ok in ['ok', 'already_ok'] and args.move:
+                move_preserve_structure(media, args.root, args.move, overwrite=True)
 
-        if utils.app_config.ARGS.jpg and media.suffix.lower() not in ['.jpeg', '.jpg'] and utils.app_config.ARGS.write \
-                and media.suffix.lower() in IMAGE_EXTS:
-            try:
-                media2 = to_jpeg(media)
-                media.unlink()
-                media = media2
-            except Exception as e:
-                failures.append((json_path, None, e.__str__()))
+
+
+    else:
+        # scan all json files
+        json_files = [p for p in root.rglob("*.json") if p.is_file()]
+        total = len(json_files)
+        if not json_files:
+            print("[WARN] No JSON sidecars found. vroom vroom.")
+            sys.exit(0)
+
+        for i, json_path in enumerate(json_files):
+            # for json_path in tqdm(json_files, desc="Processing sidecars", unit="file"):
+            print("[" + str(i) + "/" + str(total) + "] processing " + str(json_path) + '')
+            data = parse_json(json_path)
+            if data is None:
+                failures.append((json_path, None, "JSON unreadable"))
+                continue
+            if "__parse_error__" in data:
+                failures.append((json_path, None, data["__parse_error__"]))
                 continue
 
-        ok, msg = make_changes(json_path, media_path, media, title, photoTakenTime_dt, gps)
+            if "title" not in data:
+                skipped.append((json_path, None, "No title field"))
+                continue
 
-        if ok == 'ok':
-            success.append((json_path, media))
-        if ok == 'already_ok':
-            already_ok.append((json_path, media, ""))
-        if ok == 'skipped':
-            skipped.append((json_path, media, msg))
-        if ok == 'failures':
-            failures.append((json_path, media, msg))
+            # strictly require photoTakenTime
+            if "photoTakenTime" in data and "timestamp" in data["photoTakenTime"]:
+                photoTakenTime = int(data["photoTakenTime"]["timestamp"])
+            else:
+                failures.append((json_path, None, "photoTakenTime in json missing"))
+                continue
 
-        if ok in ['ok', 'already_ok'] and args.move and args.write:
-            move_preserve_structure(media, args.root, args.move, overwrite=True)
-            move_preserve_structure(json_path, args.root, args.move, overwrite=True)
+            if "creationTime" in data and "timestamp" in data["creationTime"]:
+                creationTime = int(data["creationTime"]["timestamp"])
+            else:
+                creationTime = photoTakenTime
+
+            photoTakenTime_dt = datetime.fromtimestamp(photoTakenTime, timezone.utc)
+            # photoCreationTime_dt = datetime.fromtimestamp(creationTime, timezone.utc)
+
+            gps = None
+            if "geoData" in data:
+                geo = data["geoData"]
+                try:
+                    lat = float(geo.get("latitude"))
+                    lon = float(geo.get("longitude"))
+                    alt = float(geo.get("altitude"))
+                    gps = (lat, lon, alt)
+                except Exception:
+                    pass
+
+            # the file to update,
+            # now this file must exist, or else its there with some other name changes.
+            title = data.get("title")
+            media_path = Path(str(json_path.parent) + '/' + title)
+            # here
+
+            media, matches = find_matching_media(json_path, media_path)
+            if not media and matches is not None:
+                print("\n  media for '" + json_path.stem + json_path.suffix + "' not found, will ask for confirmation later. \n")
+                ask_later.append((json_path, media_path, matches, title, photoTakenTime_dt, gps))
+                continue
+            elif not media:
+                print("\n  media for '" + json_path.stem + json_path.suffix + "' not found. \n")
+                failures.append((json_path, None, "Media not found / Skip"))
+                continue
+
+            if utils.app_config.ARGS.jpg and media.suffix.lower() not in ['.jpeg', '.jpg'] and utils.app_config.ARGS.write \
+                    and media.suffix.lower() in IMAGE_EXTS:
+                try:
+                    media2 = to_jpeg(media)
+                    media.unlink()
+                    media = media2
+                except Exception as e:
+                    failures.append((json_path, None, e.__str__()))
+                    continue
+
+            ok, msg = make_changes(media, photoTakenTime_dt, gps)
+
+            if ok == 'ok':
+                success.append((json_path, media))
+            if ok == 'already_ok':
+                already_ok.append((json_path, media, ""))
+            if ok == 'skipped':
+                skipped.append((json_path, media, msg))
+            if ok == 'failures':
+                failures.append((json_path, media, msg))
+
+            if ok in ['ok', 'already_ok'] and args.move and args.write:
+                move_preserve_structure(media, args.root, args.move, overwrite=True)
+                move_preserve_structure(json_path, args.root, args.move, overwrite=True)
+
+    total_ask_later = len(ask_later)
 
     while ask_later:
         json_path, media_path, matches, title, photoTakenTime_dt, gps = ask_later.pop(0)
 
         print(
-            "\n\nNo matches found, choose the closes match from below (based on filename) or skip\n"
+            f"{total_ask_later - len(ask_later)} of {total_ask_later} \n"
+            "No matches found, choose the closes match from below (based on filename) or skip\n"
             f"JSON:     {json_path.name}\n"
             f"NEEDED:   {media_path.name}\n=== found " + str(len(matches)) + " lazy matches ==="
         )
@@ -289,7 +358,7 @@ def main():
                         failures.append((json_path, None, e.__str__()))
                         continue
 
-                ok, msg = make_changes(json_path, media_path, media, title, photoTakenTime_dt, gps)
+                ok, msg = make_changes(media, photoTakenTime_dt, gps)
                 if ok == 'ok':
                     success.append((json_path, media))
                 if ok == 'already_ok':

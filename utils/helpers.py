@@ -1,4 +1,5 @@
 import json
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -205,3 +206,53 @@ def move_preserve_structure(
                 tmp.unlink()
         except Exception as e:
             _fatal(f"Failed cleaning temp file: {tmp}", e)
+
+
+def get_time_from_filename(filename: str):
+    """
+    Extract datetime from filename (without extension) and return Unix timestamp (UTC).
+    Returns None if no timestamp found.
+    """
+
+    patterns = [
+        # YYYYMMDD_HHMMSS or YYYYMMDDHHMMSS
+        r'(?P<y>\d{4})(?P<m>\d{2})(?P<d>\d{2})[_\- ]?(?P<H>\d{2})(?P<M>\d{2})(?P<S>\d{2})',
+
+        # YYYY-MM-DD_HH-MM-SS / YYYY.MM.DD HH.MM.SS
+        r'(?P<y>\d{4})[-_.](?P<m>\d{2})[-_.](?P<d>\d{2})[_ T\-\.]?(?P<H>\d{2})[-_.](?P<M>\d{2})[-_.](?P<S>\d{2})',
+
+        # DD-MM-YYYY_HH-MM-SS
+        r'(?P<d>\d{2})[-_.](?P<m>\d{2})[-_.](?P<y>\d{4})[_ T\-\.]?(?P<H>\d{2})[-_.](?P<M>\d{2})[-_.](?P<S>\d{2})',
+
+        # Unix timestamp (seconds)
+        r'(?P<unix>\b\d{10}\b)',
+
+        # Unix timestamp (milliseconds)
+        r'(?P<unixms>\b\d{13}\b)',
+    ]
+
+    for pat in patterns:
+        m = re.search(pat, filename)
+        if not m:
+            continue
+
+        gd = m.groupdict()
+
+        if gd.get("unix"):
+            return int(gd["unix"])
+
+        if gd.get("unixms"):
+            return int(gd["unixms"]) // 1000
+
+        dt = datetime(
+            int(gd["y"]),
+            int(gd["m"]),
+            int(gd["d"]),
+            int(gd["H"]),
+            int(gd["M"]),
+            int(gd["S"]),
+            tzinfo=timezone.utc
+        )
+        return int(dt.timestamp())
+
+    return None
