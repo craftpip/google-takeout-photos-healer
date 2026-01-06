@@ -41,7 +41,7 @@ choco install ffmpeg
 ```
 git clone <this repo>
 cd <this repo>
-python3.10 -m venv venv
+python3.10 -m venv venv``
 . venv/bin/activate
 pip install -r requirements.txt 
 python main.py --root "/path/to/takeout/" --write --jpg --move "/path/to/relaxation" 
