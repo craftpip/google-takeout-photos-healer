@@ -273,17 +273,17 @@ def run(
 
         total = max(1, len(media_files))
 
-        dt_to_write = None
+        overwrite_date = None
         try:
             if args.overwrite_date:
-                dt_to_write = _parse_dt_user(args.overwrite_date)
+                overwrite_date = _parse_dt_user(args.overwrite_date)
         except Exception as e:
             log(f"[FATAL] Bad overwrite datetime: {e}\n")
             return 1
 
         dt_smart_fallback = None
         try:
-            if args.overwrite_smart:
+            if args.overwrite_smart and args.overwrite_smart is not True:
                 dt_smart_fallback = _parse_dt_user(args.overwrite_smart)
         except Exception as e:
             log(f"[WARN] Invalid fallback datetime for overwrite smart: {e}\n")
@@ -306,22 +306,22 @@ def run(
                     try:
                         # accept either datetime or timestamp-like from your helper
                         if isinstance(t, datetime):
-                            dt_to_write = t
+                            overwrite_date = t
                         else:
-                            dt_to_write = datetime.fromtimestamp(int(t), tz=timezone.utc)
-                        if dt_to_write.tzinfo is None:
-                            dt_to_write = dt_to_write.replace(tzinfo=timezone.utc)
-                        dt_to_write = dt_to_write.astimezone(timezone.utc)
-                        log(f"Found date: {_format_dt(dt_to_write)} for file {media.name}\n")
+                            overwrite_date = datetime.fromtimestamp(int(t), tz=timezone.utc)
+                        if overwrite_date.tzinfo is None:
+                            overwrite_date = overwrite_date.replace(tzinfo=timezone.utc)
+                        overwrite_date = overwrite_date.astimezone(timezone.utc)
+                        log(f"Found date: {_format_dt(overwrite_date)} for file {media.name}\n")
                     except Exception:
                         pass
                 else:
                     if args.overwrite_smart is True:
                         continue
                     else:
-                        dt_to_write = datetime.fromtimestamp(dt_smart_fallback.timestamp(), tz=timezone.utc)
+                        overwrite_date = datetime.fromtimestamp(dt_smart_fallback.timestamp(), tz=timezone.utc)
 
-            photoTakenTime_dt = dt_to_write.astimezone(timezone.utc)
+            photoTakenTime_dt = overwrite_date.astimezone(timezone.utc)
 
             if (
                     utils.app_config.ARGS.jpg
@@ -533,7 +533,7 @@ def launch_ui():
         sys.exit(1)
 
     root = tk.Tk()
-    root.title("Media Tool")
+    root.title("Google Photos Takeout Healer")
     root.geometry("860x880")
 
     q: "queue.Queue[tuple[str, object]]" = queue.Queue()

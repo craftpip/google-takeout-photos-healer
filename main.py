@@ -7,16 +7,45 @@ from tqdm import tqdm
 from utils.helpers import IMAGE_EXTS, VIDEO_EXTS, check_dependencies, parse_json, move_preserve_structure, get_time_from_filename
 import utils.app_config
 
-TIME_KEYS = ["photoTakenTime", "creationTime", "mediaMetadata"]
-GEO_KEYS = ["geoData", "geoDataExif"]
-
 # ------------------------ name matching ------------------------
 from utils.find_media import find_matching_media
 from utils.image import read_img_meta, write_image, to_jpeg
 from utils.video import read_vid_meta, write_video, get_existing_times_vid
 
+TIME_KEYS = ["photoTakenTime", "creationTime", "mediaMetadata"]
+GEO_KEYS = ["geoData", "geoDataExif"]
 
-def make_changes(media, photoTakenTime_dt, gps):
+
+def _parse_dt_user(s: str) -> datetime:
+    """
+    Supports:
+      - YYYY-MM-DD
+      - YYYY-MM-DD HH:MM:SS
+    Returns UTC tz-aware datetime.
+    """
+    s = (s or "").strip()
+    if not s:
+        raise ValueError("empty datetime")
+
+    fmts = ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d"]
+    last_err = None
+    for fmt in fmts:
+        try:
+            dt = datetime.strptime(s, fmt)
+            return dt.replace(tzinfo=timezone.utc)
+        except Exception as e:
+            last_err = e
+    raise ValueError(f"Invalid datetime '{s}'. Expected YYYY-MM-DD or YYYY-MM-DD HH:MM:SS") from last_err
+
+
+def _format_dt(dt: datetime) -> str:
+    dt = dt.astimezone(timezone.utc)
+    if dt.hour == 0 and dt.minute == 0 and dt.second == 0:
+        return dt.strftime("%Y-%m-%d")
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def make_changes(media: Path, photoTakenTime_dt: datetime, gps):
     ext = media.suffix.lower()
     is_img = ext in IMAGE_EXTS
     is_vid = ext in VIDEO_EXTS
@@ -44,31 +73,30 @@ def make_changes(media, photoTakenTime_dt, gps):
             except Exception:
                 pass
 
-        if media_created_time is not None and photoTakenTime_dt.timestamp() == media_created_time.timestamp():
-            # same time then its already updated.
-            return 'already_ok', ''
-        else:
-            ok, msg = write_image(media, photoTakenTime_dt, gps, write=utils.app_config.ARGS.write)
-            if ok:
-                return 'ok', ''
-            else:
-                print("failed to write image " + str(media.stem + media.suffix))
-                return 'failure', ''
+        if (
+                media_created_time is not None
+                and int(photoTakenTime_dt.timestamp()) == int(media_created_time.timestamp())
+        ):
+            return "already_ok", ""
+
+        ok, msg = write_image(media, photoTakenTime_dt, gps, write=utils.app_config.ARGS.write)
+        if ok:
+            return "ok", ""
+        return "failure", msg or "failed to write image"
 
     if is_vid:
         meta = read_vid_meta(media)
         dto_v, cr_v, md_v = get_existing_times_vid(meta)
 
-        if cr_v is not None and photoTakenTime_dt.timestamp() == cr_v.timestamp():
-            return 'already_ok', ''
-        else:
-            ok, msg = write_video(media, photoTakenTime_dt, write=utils.app_config.ARGS.write)
-            if ok:
-                return 'ok', ''
-            else:
-                return 'failure', msg
+        if cr_v is not None and int(photoTakenTime_dt.timestamp()) == int(cr_v.timestamp()):
+            return "already_ok", ""
 
-    return 'failure'
+        ok, msg = write_video(media, photoTakenTime_dt, write=utils.app_config.ARGS.write)
+        if ok:
+            return "ok", ""
+        return "failure", msg or "failed to write video"
+
+    return "failure", "unknown failure"
 
 
 def main():
@@ -76,10 +104,16 @@ def main():
     parser.add_argument("--root", required=True)
     parser.add_argument("--write", action="store_true")
     parser.add_argument("--report", default="takeout_restore_report.txt")
-    parser.add_argument("--overwrite-smart", help="Overwrite all files from file's format or fallback to date-time")
-    parser.add_argument("--overwrite-date", help="Overwrite all files to fixed date-time")
-    parser.add_argument("--move", help="Move the files to sub-directory after update")
-    parser.add_argument("--jpg", action="store_true", help="Convert non jpeg images to jpeg")
+    parser.add_argument(
+        "--overwrite-smart",
+        nargs="?",
+        const=True,  # if flag present with no value => True
+        default=False,  # if flag absent => False
+        help="Overwrite all files using filename datetime when present, else use this fallback datetime",
+    )
+    parser.add_argument("--overwrite-date", help="Overwrite all files to fixed datetime")
+    parser.add_argument("--move", help="Move the files to sub-directory after update (used with --write)")
+    parser.add_argument("--jpg", action="store_true", help="Convert non jpeg images to jpeg (used with --write)")
     parser.add_argument("--motionphoto", action="store_true", help="Find short mp4 motion-photo videos that have a matching photo")
     parser.add_argument("--delete", action="store_true", help="When used with --motionphoto, delete the found videos")
     args = parser.parse_args()
@@ -172,32 +206,49 @@ def main():
             print('[WARN] No media files found')
             sys.exit(0)
 
-        total = len(media_files)
-        date_to_write = ts = int(
-            datetime.strptime(args.overwrite_smart or args.overwrite_date, "%Y-%m-%d")
-            .replace(tzinfo=timezone.utc)
-            .timestamp()
-        )
+        overwrite_date = None
+        try:
+            if args.overwrite_date:
+                overwrite_date = _parse_dt_user(args.overwrite_date)
+        except Exception as e:
+            print(f"[FATAL] Bad overwrite datetime: {e}\n")
+            return 1
 
-        print(ts)
-        for i, media in enumerate(media_files):
-            print("[" + str(i) + "/" + str(total) + "] processing " + str(media) + '')
+        dt_smart_fallback = None
+        try:
+            if args.overwrite_smart and args.overwrite_smart is not True:
+                dt_smart_fallback = _parse_dt_user(args.overwrite_smart)
+        except Exception as e:
+            print(f"[WARN] Invalid fallback datetime for overwrite smart: {e}\n")
+            pass
 
+        for i, media in enumerate(media_files, 1):
+
+            dt_found = None
             if args.overwrite_smart:
                 media_name = media.stem
-
-                time = get_time_from_filename(media_name)
-                if time is not None:
-                    dt = datetime.fromtimestamp(ts, tz=timezone.utc)
-                    # show time only if it's not midnight
-                    if dt.time().hour or dt.time().minute or dt.time().second:
-                        date_to_write = dt.strftime("%Y-%m-%d %H:%M:%S")
+                t = get_time_from_filename(media_name)
+                if t is not None:
+                    try:
+                        # accept either datetime or timestamp-like from your helper
+                        if isinstance(t, datetime):
+                            overwrite_date = t
+                        else:
+                            overwrite_date = datetime.fromtimestamp(int(t), tz=timezone.utc)
+                        if overwrite_date.tzinfo is None:
+                            overwrite_date = overwrite_date.replace(tzinfo=timezone.utc)
+                        overwrite_date = overwrite_date.astimezone(timezone.utc)
+                        log(f"Found date: {_format_dt(overwrite_date)} for file {media.name}\n")
+                    except Exception:
+                        pass
+                else:
+                    if args.overwrite_smart is True:
+                        continue
                     else:
-                        date_to_write = dt.strftime("%Y-%m-%d")
+                        overwrite_date = datetime.fromtimestamp(dt_smart_fallback.timestamp(), tz=timezone.utc)
 
-                    print(f'Found date: {date_to_write} for file {media.stem}{media.suffix}')
+            photoTakenTime_dt = overwrite_date.astimezone(timezone.utc)
 
-            photoTakenTime_dt = datetime.fromtimestamp(date_to_write, timezone.utc)
             if utils.app_config.ARGS.jpg and media.suffix.lower() not in ['.jpeg', '.jpg'] and utils.app_config.ARGS.write \
                     and media.suffix.lower() in IMAGE_EXTS:
                 try:
@@ -205,7 +256,7 @@ def main():
                     media.unlink()
                     media = media2
                 except Exception as e:
-                    failures.append((media, None, e.__str__()))
+                    failures.append((media, None, str(e)))
                     continue
 
             ok, msg = make_changes(media, photoTakenTime_dt, None)
@@ -218,7 +269,7 @@ def main():
             if ok == 'failures':
                 failures.append((media, media, msg))
 
-            if ok in ['ok', 'already_ok'] and args.move:
+            if ok in ['ok', 'already_ok'] and args.move and args.write:
                 move_preserve_structure(media, args.root, args.move, overwrite=True)
 
 
@@ -295,7 +346,7 @@ def main():
                     media.unlink()
                     media = media2
                 except Exception as e:
-                    failures.append((json_path, None, e.__str__()))
+                    failures.append((json_path, None, str(e)))
                     continue
 
             ok, msg = make_changes(media, photoTakenTime_dt, gps)
@@ -368,7 +419,7 @@ def main():
                 if ok == 'failures':
                     failures.append((json_path, media, msg))
 
-                if ok in ['ok', 'already_ok'] and args.move:
+                if ok in ['ok', 'already_ok'] and args.move and args.write:
                     move_preserve_structure(media, args.root, args.move, overwrite=True)
                     move_preserve_structure(json_path, args.root, args.move, overwrite=True)
 
