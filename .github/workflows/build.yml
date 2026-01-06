@@ -16,26 +16,31 @@ jobs:
             os: Windows
             arch: x64
             artifact_suffix: windows-x64
+            python: "3.10"
 
           - runner: ubuntu-24.04
             os: Linux
             arch: x64
             artifact_suffix: linux-x64
+            python: "3.10"
 
           - runner: ubuntu-24.04-arm
             os: Linux
             arch: arm64
             artifact_suffix: linux-arm64
+            python: "3.10"
 
           - runner: macos-14
             os: macOS
             arch: arm64
             artifact_suffix: macos-arm64
+            python: "3.10"
 
           - runner: macos-15-intel
             os: macOS
             arch: x64
             artifact_suffix: macos-x64
+            python: "3.10"
 
     runs-on: ${{ matrix.runner }}
 
