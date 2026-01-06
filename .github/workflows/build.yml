@@ -11,10 +11,33 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, windows-latest, macos-latest ]
-        python: [ "3.10" ]
+        include:
+          - runner: windows-latest
+            os: Windows
+            arch: x64
+            artifact_suffix: windows-x64
 
-    runs-on: ${{ matrix.os }}
+          - runner: ubuntu-24.04
+            os: Linux
+            arch: x64
+            artifact_suffix: linux-x64
+
+          - runner: ubuntu-24.04-arm
+            os: Linux
+            arch: arm64
+            artifact_suffix: linux-arm64
+
+          - runner: macos-14
+            os: macOS
+            arch: arm64
+            artifact_suffix: macos-arm64
+
+          - runner: macos-15-intel
+            os: macOS
+            arch: x64
+            artifact_suffix: macos-x64
+
+    runs-on: ${{ matrix.runner }}
 
     steps:
       - name: Checkout
@@ -64,22 +87,22 @@ jobs:
         run: |
           pyinstaller --noconfirm --clean --onefile --name "${{ env.APP_NAME }}" "${{ env.APP_ENTRY }}"
 
-      - name: Rename artifact (per OS)
+      - name: Rename artifact (per OS+arch)
         shell: bash
         run: |
           mkdir -p out
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            cp "dist/${{ env.APP_NAME }}.exe" "out/${{ env.APP_NAME }}-windows.exe"
-          elif [[ "${{ runner.os }}" == "macOS" ]]; then
-            cp "dist/${{ env.APP_NAME }}" "out/${{ env.APP_NAME }}-macos"
+          if [[ "${{ matrix.os }}" == "Windows" ]]; then
+            cp "dist/${{ env.APP_NAME }}.exe" "out/${{ env.APP_NAME }}-${{ matrix.artifact_suffix }}.exe"
+          elif [[ "${{ matrix.os }}" == "macOS" ]]; then
+            cp "dist/${{ env.APP_NAME }}" "out/${{ env.APP_NAME }}-${{ matrix.artifact_suffix }}"
           else
-            cp "dist/${{ env.APP_NAME }}" "out/${{ env.APP_NAME }}-linux"
+            cp "dist/${{ env.APP_NAME }}" "out/${{ env.APP_NAME }}-${{ matrix.artifact_suffix }}"
           fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-${{ runner.os }}
+          name: ${{ env.APP_NAME }}-${{ matrix.artifact_suffix }}
           path: out/*
 
   # Optional: attach builds to a GitHub Release when you create one
