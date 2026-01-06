@@ -7,11 +7,25 @@
 - Scans and applies original creation date (or test run to see what's up)
 - Works on Images and Videos
 - Handles file name differences quirks
+- Converts images to jpg, because it ensures 'photoTakenTime's existence.
 - Finds media for json, they shall be no orphan json files (it will ask you to choose from similarly named media files or you can skip)
 - Moves the healed media to a new folder. (leaving orphan media files behind that you can analyse)
-- Converts images to jpg, because it ensures 'photoTakenTime's existence.
+- Features:
+  - For orphan files that do not have json sidecar, overwrite smart identifies created date from the file's name
+  - Or bulk update file's datetime to a fixed date.
 - Shows progress, prints failures, and writes a summary report
-- Easy, Nextcloud is happy
+- Easy, now you can upload on your self-hosted setup
+
+### With UI 
+
+Independent executable compiled for linux, windows and mac, with lightweight UI and small footprint. Includes all dependencies in one file.  
+
+[Downloads](https://github.com/craftpip/google-takeout-photos-healer/releases)
+
+![Screenshot_20260106_151504.png](screenshots/2.png)
+![1.png](screenshots/1.png)
+
+### Or run it
 
 ### Requirements
 
