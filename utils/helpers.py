@@ -215,6 +215,9 @@ def get_time_from_filename(filename: str) -> Optional[int]:
     """
 
     patterns = [
+        # YYYY-MM-DD-HHMM (e.g., 2013-06-03-1857)
+        r'(?P<y>\d{4})[-_.](?P<m>\d{2})[-_.](?P<d>\d{2})[-_.](?P<hm>\d{4})\b',
+
         # WP_YYYYMMDD_HH_MM_SS (e.g., WP_20131230_22_01_21_Pro-edited)
         r'(?P<y>\d{4})(?P<m>\d{2})(?P<d>\d{2})[_\- ](?P<H>\d{2})[_\- ](?P<M>\d{2})[_\- ](?P<S>\d{2})',
 
@@ -229,6 +232,12 @@ def get_time_from_filename(filename: str) -> Optional[int]:
 
         # DD-MM-YYYY_HH-MM-SS
         r'(?P<d>\d{2})[-_.](?P<m>\d{2})[-_.](?P<y>\d{4})[_ T\-\.]?(?P<H>\d{2})[-_.](?P<M>\d{2})[-_.](?P<S>\d{2})',
+
+        # Date-only YYYYMMDD (e.g., IMG-20150206-WA0000-edited)
+        r'(?P<y>\d{4})(?P<m>\d{2})(?P<d>\d{2})\b',
+
+        # Date-only YYYY-MM-DD
+        r'(?P<y>\d{4})[-_.](?P<m>\d{2})[-_.](?P<d>\d{2})\b',
 
         # Unix timestamp (seconds)
         r'(?P<unix>\b\d{10}\b)',
@@ -250,22 +259,21 @@ def get_time_from_filename(filename: str) -> Optional[int]:
         if gd.get("unixms"):
             return int(gd["unixms"]) // 1000
 
-        # Handle WP_YYYYMMDD_HHMM / HMM
+        # Packed HHMM / HMM
         if gd.get("hm"):
-            hm = gd["hm"].zfill(4)  # 003 -> 0003
+            hm = gd["hm"].zfill(4)
             H = int(hm[:2])
             M = int(hm[2:])
             S = 0
         else:
-            H = int(gd["H"])
-            M = int(gd["M"])
-            S = int(gd["S"])
+            # If time groups are missing (date-only), default to 00:00:00
+            H = int(gd["H"]) if gd.get("H") else 0
+            M = int(gd["M"]) if gd.get("M") else 0
+            S = int(gd["S"]) if gd.get("S") else 0
 
         try:
             dt = datetime(
-                int(gd["y"]),
-                int(gd["m"]),
-                int(gd["d"]),
+                int(gd["y"]), int(gd["m"]), int(gd["d"]),
                 H, M, S,
                 tzinfo=timezone.utc
             )

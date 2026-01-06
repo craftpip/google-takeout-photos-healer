@@ -281,6 +281,14 @@ def run(
             log(f"[FATAL] Bad overwrite datetime: {e}\n")
             return 1
 
+        dt_smart_fallback = None
+        try:
+            if args.overwrite_smart:
+                dt_smart_fallback = _parse_dt_user(args.overwrite_smart)
+        except Exception as e:
+            log(f"[WARN] Invalid fallback datetime for overwrite smart: {e}\n")
+            pass
+
         for i, media in enumerate(media_files, 1):
             if stop_event and stop_event.is_set():
                 log("\n[STOP] Cancelled by user.\n")
@@ -311,9 +319,7 @@ def run(
                     if args.overwrite_smart is True:
                         continue
                     else:
-                        dt_to_write = datetime.fromtimestamp(int(args.overwrite_smart), tz=timezone.utc)
-
-
+                        dt_to_write = datetime.fromtimestamp(dt_smart_fallback.timestamp(), tz=timezone.utc)
 
             photoTakenTime_dt = dt_to_write.astimezone(timezone.utc)
 
