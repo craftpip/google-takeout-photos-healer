@@ -97,3 +97,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/**/*
+
+env:
+  APP_ENTRY: main-ui.py   # <-- change this to your real start script path
+  APP_NAME: google takeout healer
